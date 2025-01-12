@@ -1,0 +1,213 @@
+<html><head><base href="/" />
+<meta charset="utf-8" />
+<title>Fixed Texture Configurator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body {
+    font-family: 'Inter', sans-serif;
+    margin: 20px;
+    background: #f8f9fa;
+  }
+  .form-group {
+    margin-bottom: 20px;
+  }
+  .form-group label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 5px;
+    color: #2c3e50;
+  }
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 12px;
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  }
+  .texture-item {
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #f1f3f5;
+    transition: transform 0.2s;
+  }
+  .texture-item:hover {
+    transform: translateY(-2px);
+  }
+  .texture-item img {
+    width: 100%;
+    height: 100px;
+    object-fit: cover;
+    image-rendering: pixelated;
+    cursor: pointer;
+    border: 2px solid transparent;
+  }
+  .texture-item.selected {
+    box-shadow: 0 0 0 3px #4299e1;
+  }
+  .texture-item.selected img {
+    border-color: #4299e1;
+  }
+  .texture-info {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 4px 8px;
+    font-size: 11px;
+    word-break: break-all;
+  }
+  #output {
+    margin-top: 20px;
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    font-family: monospace;
+    font-size: 14px;
+  }
+  .input-file {
+    margin: 20px 0;
+    padding: 20px;
+    border: 2px dashed #cbd5e0;
+    border-radius: 8px;
+    text-align: center;
+    transition: all 0.2s;
+  }
+  .input-file:hover {
+    border-color: #4299e1;
+    background: #ebf8ff;
+  }
+</style>
+</head>
+<body>
+  <h1>Texture Configurator</h1>
+
+  <div class="input-file">
+    <input type="file" id="folder-input" webkitdirectory mozdirectory multiple>
+  </div>
+
+  <pre id="output"></pre>
+
+  <div id="texture-options"></div>
+
+  <script>
+    let modSections = [];
+    let textureConfig = '';
+    let textureNames = new Set();
+
+    document.getElementById('folder-input').addEventListener('change', loadFolder, false);
+
+    async function loadFolder(event) {
+      const files = event.target.files;
+      if (files.length === 0) {
+        alert('Please select a folder containing mod files.');
+        return;
+      }
+
+      const zip = new JSZip();
+      modSections = [];
+      textureNames.clear();
+
+      try {
+        const jarFiles = Array.from(files).filter(file => file.name.endsWith('.jar'));
+        const filePromises = jarFiles.map(file => loadJarFile(file));
+        await Promise.all(filePromises);
+        displayTextures();
+      } catch (error) {
+        console.error('Failed to process files:', error);
+        alert('Failed to process files. Please try again.');
+      }
+    }
+
+    async function loadJarFile(file) {
+      try {
+        const zip = new JSZip();
+        const zipFile = await zip.loadAsync(file);
+        const mcmodInfoFile = zipFile.file('mcmod.info');
+        
+        if (!mcmodInfoFile) return;
+
+        const mcmodInfoContent = await mcmodInfoFile.async('text');
+        const mcmodInfoJson = JSON.parse(mcmodInfoContent);
+        const modid = Array.isArray(mcmodInfoJson) ? 
+          mcmodInfoJson[0]?.modid : 
+          mcmodInfoJson.modid;
+
+        if (!modid) return;
+
+        const modSection = { modid, images: [] };
+        const texturePromises = [];
+
+        zipFile.forEach((relativePath, file) => {
+          if (relativePath.match(/\.(png|jpg)$/i)) {
+            const texturePath = relativePath.replace(/\.(png|jpg)$/i, '');
+            if (!textureNames.has(texturePath)) {
+              textureNames.add(texturePath);
+              texturePromises.push(
+                file.async('blob').then(blob => ({
+                  name: texturePath,
+                  url: URL.createObjectURL(blob),
+                  modid
+                }))
+              );
+            }
+          }
+        });
+
+        const images = await Promise.all(texturePromises);
+        modSection.images = images;
+        if (modSection.images.length > 0) {
+          modSections.push(modSection);
+        }
+      } catch (error) {
+        console.error('Failed to process jar file:', error);
+      }
+    }
+
+    function displayTextures() {
+      const container = document.getElementById('texture-options');
+      container.innerHTML = '';
+
+      const imageGrid = document.createElement('div');
+      imageGrid.className = 'image-grid';
+
+      modSections.forEach(modSection => {
+        modSection.images.forEach(image => {
+          const textureItem = document.createElement('div');
+          textureItem.className = 'texture-item';
+          
+          const img = document.createElement('img');
+          img.src = image.url;
+          img.alt = image.name;
+          
+          const info = document.createElement('div');
+          info.className = 'texture-info';
+          const displayName = `${modSection.modid}:${image.name.split('/').pop()}`;
+          info.textContent = displayName;
+
+          textureItem.appendChild(img);
+          textureItem.appendChild(info);
+
+          textureItem.addEventListener('click', () => {
+            const prevSelected = document.querySelector('.texture-item.selected');
+            if (prevSelected) prevSelected.classList.remove('selected');
+            
+            textureItem.classList.add('selected');
+            document.getElementById('output').textContent = displayName;
+          });
+
+          imageGrid.appendChild(textureItem);
+        });
+      });
+
+      container.appendChild(imageGrid);
+    }
+  </script>
+</body>
+</html>
